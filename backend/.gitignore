@@ -1,0 +1,4 @@
+.env
+DATABASE_URL=postgresql://postgres:[Adii!7459__]@db.rqmrcbyaqujozprgfjux.supabase.co:5432/postgres
+
+*.db

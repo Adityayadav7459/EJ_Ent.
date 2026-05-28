@@ -1,0 +1,15 @@
+# Universal Secrets & Environments
+.env
+.env.*
+
+# Python / Backend
+venv/
+__pycache__/
+*.pyc
+test.db
+
+# Node / Frontend
+node_modules/
+dist/
+build/
+.vite-temp/
