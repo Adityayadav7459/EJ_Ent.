@@ -26,9 +26,10 @@ services:
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-      # These two lines are the "Passport" for MinIO to allow public IP traffic
       MINIO_BROWSER_REDIRECT_URL: http://40.80.89.198:9000
       MINIO_SERVER_URL: http://40.80.89.198:9000
+      # The Master CORS Override for Standalone Mode:
+      MINIO_API_CORS_ALLOW_ORIGIN: "http://40.80.89.198"
     ports:
       - "9000:9000"
       - "9001:9001"
