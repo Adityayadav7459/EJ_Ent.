@@ -1,6 +1,8 @@
 # Universal Secrets & Environments
 .env
 .env.*
+# Universal Secrets & Environments
+!.env.example
 
 # Python / Backend
 venv/
