@@ -50,8 +50,8 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",    # <-- ADDED LOCAL VITE PORT
         "http://127.0.0.1:5173",
-        "http://40.80.89.198:8000" 
-        "http://40.80.89.198"    # <-- ADDED THE IP EQUIVALENT
+        "http://40.80.89.198:8000",
+        "http://40.80.89.198",   # <-- ADDED THE IP EQUIVALENT
     ],
     allow_credentials=True,
     allow_methods=["*"],
