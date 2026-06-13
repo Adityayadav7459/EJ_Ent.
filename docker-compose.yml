@@ -22,15 +22,12 @@ services:
   # 3. The Object Storage Vault
   minio:
     image: minio/minio
-    command: server /data --address ":9000" --console-address ":9001"
+    command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
-      # Tell MinIO to accept signatures from the universal bridge
-      MINIO_SERVER_URL: "http://host.docker.internal:9000"
-      MINIO_API_CORS_ALLOW_ORIGIN: "*"
-    volumes:
-      - minio_data:/data
+      # Add this line to tell MinIO its public identity:
+      MINIO_BROWSER_REDIRECT_URL: http://40.80.89.198:9000
     ports:
       - "9000:9000"
       - "9001:9001"
