@@ -286,7 +286,7 @@ export default function Dashboard() {
       const token = localStorage.getItem("access_token");
 
       // UPGRADED: Sending data cleanly inside a JSON Body
-      const res = await fetch("http://127.0.0.1:8000/test-background-upload", {
+      const res = await fetch("http://40.80.89.198:8000/test-background-upload", {
         method: "POST",
         headers: { 
           "Authorization": `Bearer ${token}`,
@@ -306,7 +306,7 @@ export default function Dashboard() {
 
       const interval = setInterval(async () => {
         try {
-          const statusRes = await fetch(`http://127.0.0.1:8000/task-status/${taskId}`, {
+          const statusRes = await fetch(`http://40.80.89.198:8000/task-status/${taskId}`, {
             headers: { "Authorization": `Bearer ${token}` }
           });
           
@@ -355,7 +355,7 @@ export default function Dashboard() {
         setUploadProgressMsg("Requesting ticket...");
         const token = localStorage.getItem("access_token");
         const res = await fetch(
-          `http://127.0.0.1:8000/generate-upload-url?file_name=${encodeURIComponent(selectedFile.name)}&file_type=${encodeURIComponent(selectedFile.type)}`,
+          `http://40.80.89.198:8000/generate-upload-url?file_name=${encodeURIComponent(selectedFile.name)}&file_type=${encodeURIComponent(selectedFile.type)}`,
           { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } }
         );
 
