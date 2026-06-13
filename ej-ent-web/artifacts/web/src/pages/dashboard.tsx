@@ -12,6 +12,7 @@ import {
   Database,
   Pencil,
   Trash2,
+  Youtube // <-- The YouTube Icon
 } from "lucide-react";
 import {
   getRecords,
@@ -20,11 +21,19 @@ import {
   deleteRecord,
   type Record,
 } from "@/lib/api";
+import { Progress } from "@/components/ui/progress";
 
 interface Toast {
   id: number;
   type: "success" | "error";
   message: string;
+}
+
+// Track the live publishing status for specific records
+interface PublishTask {
+  taskId: string;
+  progress: number;
+  status: string; // 'STARTING', 'PROGRESS', 'SUCCESS', 'FAILURE'
 }
 
 let toastId = 0;
@@ -80,12 +89,14 @@ function ToastNotification({
       }`}
     >
       {toast.type === "success" ? (
-        <CheckCircle2 className="w-4 h-4 text-green-600 flex-shrink-0" />
+        <CheckCircle2 className="w-4 h-4 text-green-600 shrink-0" />
       ) : (
-        <AlertCircle className="w-4 h-4 text-destructive flex-shrink-0" />
+        <AlertCircle className="w-4 h-4 text-destructive shrink-0" />
       )}
-      <span className="flex-1">{toast.message}</span>
+      <div className="flex-1">{toast.message}</div>
       <button
+        type="button"
+        title="Dismiss"
         onClick={() => onDismiss(toast.id)}
         className="text-muted-foreground hover:text-foreground transition-colors ml-1"
       >
@@ -114,7 +125,7 @@ function ConfirmDeleteModal({
       />
       <div className="relative bg-card border border-card-border rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-5">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-destructive/10 rounded-xl flex items-center justify-center flex-shrink-0">
+          <div className="w-10 h-10 bg-destructive/10 rounded-xl flex items-center justify-center shrink-0">
             <Trash2 className="w-5 h-5 text-destructive" />
           </div>
           <div>
@@ -122,12 +133,10 @@ function ConfirmDeleteModal({
             <p className="text-xs text-muted-foreground mt-0.5">This action cannot be undone</p>
           </div>
         </div>
-
         <p className="text-sm text-muted-foreground">
           Are you sure you want to delete{" "}
           <span className="font-medium text-foreground">"{record.title}"</span>?
         </p>
-
         <div className="flex gap-3">
           <button
             onClick={onCancel}
@@ -141,17 +150,7 @@ function ConfirmDeleteModal({
             disabled={loading}
             className="flex-1 h-9 rounded-xl bg-destructive text-destructive-foreground text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
           >
-            {loading ? (
-              <>
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                Deleting…
-              </>
-            ) : (
-              <>
-                <Trash2 className="w-3.5 h-3.5" />
-                Delete
-              </>
-            )}
+            {loading ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Deleting…</> : <><Trash2 className="w-3.5 h-3.5" />Delete</>}
           </button>
         </div>
       </div>
@@ -202,66 +201,23 @@ function EditModal({
               </p>
             </div>
           </div>
-          <button
-            onClick={onCancel}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-          >
+          <button type="button" onClick={onCancel} aria-label="Close edit modal" title="Close" className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
             <X className="w-4 h-4" />
           </button>
         </div>
-
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-foreground">
-              Title <span className="text-destructive">*</span>
-            </label>
-            <input
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="Enter a title…"
-              required
-              autoFocus
-              className="w-full h-10 px-3 rounded-xl border border-input bg-background text-foreground placeholder:text-muted-foreground text-sm outline-none transition-all focus:ring-2 focus:ring-ring focus:border-transparent"
-            />
+            <label htmlFor="edit-title" className="block text-xs font-medium text-foreground">Title <span className="text-destructive">*</span></label>
+            <input id="edit-title" type="text" value={title} onChange={(e) => setTitle(e.target.value)} required autoFocus className="w-full h-10 px-3 rounded-xl border border-input bg-background text-sm outline-none transition-all focus:ring-2 focus:ring-ring" />
           </div>
-
           <div className="space-y-1.5">
-            <label className="block text-xs font-medium text-foreground">Description</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe this record…"
-              rows={4}
-              className="w-full px-3 py-2.5 rounded-xl border border-input bg-background text-foreground placeholder:text-muted-foreground text-sm outline-none transition-all focus:ring-2 focus:ring-ring focus:border-transparent resize-none"
-            />
+            <label htmlFor="edit-description" className="block text-xs font-medium text-foreground">Description</label>
+            <textarea id="edit-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={4} className="w-full px-3 py-2.5 rounded-xl border border-input bg-background text-sm outline-none transition-all focus:ring-2 focus:ring-ring resize-none" />
           </div>
-
           <div className="flex gap-3 pt-1">
-            <button
-              type="button"
-              onClick={onCancel}
-              disabled={saving}
-              className="flex-1 h-9 rounded-xl border border-input bg-background text-sm font-medium text-foreground hover:bg-muted transition-colors disabled:opacity-50"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving || !title.trim()}
-              className="flex-1 h-9 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                <>
-                  <Pencil className="w-3.5 h-3.5" />
-                  Save Changes
-                </>
-              )}
+            <button type="button" onClick={onCancel} disabled={saving} className="flex-1 h-9 rounded-xl border border-input bg-background text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50">Cancel</button>
+            <button type="submit" disabled={saving || !title.trim()} className="flex-1 h-9 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 active:scale-[0.98] transition-all disabled:opacity-50 flex items-center justify-center gap-1.5">
+              {saving ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Saving…</> : <><Pencil className="w-3.5 h-3.5" />Save Changes</>}
             </button>
           </div>
         </form>
@@ -279,12 +235,17 @@ export default function Dashboard() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [uploadProgressMsg, setUploadProgressMsg] = useState("");
 
   const [editingRecord, setEditingRecord] = useState<Record | null>(null);
   const [deletingRecord, setDeletingRecord] = useState<Record | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
+  
+  // --- PHASE 3: AUTOMATION ENGINE TRACKING STATE ---
+  const [publishTasks, setPublishTasks] = useState<{ [key: string | number]: PublishTask }>({});
 
   function addToast(type: "success" | "error", message: string) {
     const id = ++toastId;
@@ -295,16 +256,8 @@ export default function Dashboard() {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  useEffect(() => {
-    const token = localStorage.getItem("access_token");
-    if (!token) {
-      navigate("/");
-      return;
-    }
-    fetchRecords();
-  }, []);
-
-  async function fetchRecords() {
+  // Securely wrapped to prevent React warnings
+  const fetchRecords = useCallback(async () => {
     setLoadingRecords(true);
     setFetchError(null);
     try {
@@ -315,35 +268,131 @@ export default function Dashboard() {
     } finally {
       setLoadingRecords(false);
     }
+  }, []);
+
+  useEffect(() => {
+    const token = localStorage.getItem("access_token");
+    if (!token) {
+      navigate("/");
+      return;
+    }
+    fetchRecords();
+  }, [navigate, fetchRecords]);
+
+  // --- THE POLLING ENGINE ---
+  async function handlePublishToYouTube(recordId: string | number, videoKey: string, postTitle: string) {
+    try {
+      setPublishTasks(prev => ({ ...prev, [recordId]: { progress: 0, status: "STARTING", taskId: "" } }));
+      const token = localStorage.getItem("access_token");
+
+      // UPGRADED: Sending data cleanly inside a JSON Body
+      const res = await fetch("http://127.0.0.1:8000/test-background-upload", {
+        method: "POST",
+        headers: { 
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json" // <-- Crucial for JSON payloads
+        },
+        body: JSON.stringify({
+          video_key: videoKey,
+          title: postTitle
+        })
+      });
+
+      if (!res.ok) throw new Error("Failed to secure job ticket from server.");
+      const data = await res.json();
+      const taskId = data.task_id;
+
+      setPublishTasks(prev => ({ ...prev, [recordId]: { progress: 0, status: "PROCESSING", taskId } }));
+
+      const interval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`http://127.0.0.1:8000/task-status/${taskId}`, {
+            headers: { "Authorization": `Bearer ${token}` }
+          });
+          
+          if (!statusRes.ok) return;
+          const statusData = await statusRes.json();
+
+          if (statusData.status === "SUCCESS") {
+            setPublishTasks(prev => ({ ...prev, [recordId]: { progress: 100, status: "SUCCESS", taskId } }));
+            clearInterval(interval);
+            addToast("success", `"${postTitle}" was successfully published to YouTube!`);
+          } else if (statusData.status === "FAILURE") {
+            setPublishTasks(prev => ({ ...prev, [recordId]: { progress: 0, status: "FAILURE", taskId } }));
+            clearInterval(interval);
+            addToast("error", `Automation failed for "${postTitle}".`);
+          } else {
+            setPublishTasks(prev => ({
+              ...prev,
+              [recordId]: { progress: statusData.progress || 0, status: statusData.status, taskId }
+            }));
+          }
+        } catch (e) {
+          console.error("Polling error", e);
+        }
+      }, 1000); 
+
+    } catch(err) {
+      addToast("error", err instanceof Error ? err.message : "System error triggering automation.");
+      setPublishTasks(prev => {
+        const newState = { ...prev };
+        delete newState[recordId];
+        return newState;
+      });
+    }
   }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
     setSubmitting(true);
+    setUploadProgressMsg("");
+
     try {
-      const newRecord = await createRecord(title.trim(), description.trim());
+      let finalDescription = description.trim();
+
+      if (selectedFile) {
+        setUploadProgressMsg("Requesting ticket...");
+        const token = localStorage.getItem("access_token");
+        const res = await fetch(
+          `http://127.0.0.1:8000/generate-upload-url?file_name=${encodeURIComponent(selectedFile.name)}&file_type=${encodeURIComponent(selectedFile.type)}`,
+          { method: 'POST', headers: { 'Authorization': `Bearer ${token}` } }
+        );
+
+        if (!res.ok) throw new Error("FastAPI refused the upload ticket.");
+        const data = await res.json();
+        const { upload_url, file_key } = data;
+
+        setUploadProgressMsg("Pushing massive file to MinIO...");
+        const minioRes = await fetch(upload_url, {
+          method: 'PUT', body: selectedFile, headers: { 'Content-Type': selectedFile.type },
+        });
+
+        if (!minioRes.ok) throw new Error("MinIO rejected the file upload.");
+        finalDescription = finalDescription ? `${finalDescription}\n\n[Attached Video: ${file_key}]` : `[Attached Video: ${file_key}]`;
+      }
+
+      setUploadProgressMsg("Saving record...");
+      const newRecord = await createRecord(title.trim(), finalDescription);
+      
       setRecords((prev) => [newRecord, ...prev]);
       setTitle("");
       setDescription("");
-      addToast("success", "Record created successfully.");
+      setSelectedFile(null);
+      addToast("success", "Record & Video saved successfully.");
+      
     } catch (err) {
       addToast("error", err instanceof Error ? err.message : "Failed to create record.");
     } finally {
       setSubmitting(false);
+      setUploadProgressMsg("");
     }
   }
 
-  async function handleEdit(
-    id: string | number,
-    newTitle: string,
-    newDescription: string
-  ) {
+  async function handleEdit(id: string | number, newTitle: string, newDescription: string) {
     try {
       const updated = await updateRecord(id, newTitle, newDescription);
-      setRecords((prev) =>
-        prev.map((r) => (r.id === id ? updated : r))
-      );
+      setRecords((prev) => prev.map((r) => (r.id === id ? updated : r)));
       setEditingRecord(null);
       addToast("success", "Record updated successfully.");
     } catch (err) {
@@ -374,32 +423,18 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Toast notifications */}
       <div className="fixed top-5 right-5 z-50 flex flex-col gap-2.5 items-end">
-        {toasts.map((toast) => (
-          <ToastNotification key={toast.id} toast={toast} onDismiss={dismissToast} />
-        ))}
+        {toasts.map((toast) => <ToastNotification key={toast.id} toast={toast} onDismiss={dismissToast} />)}
       </div>
 
-      {/* Modals */}
       {deletingRecord && (
-        <ConfirmDeleteModal
-          record={deletingRecord}
-          onConfirm={handleDelete}
-          onCancel={() => !deleteLoading && setDeletingRecord(null)}
-          loading={deleteLoading}
-        />
+        <ConfirmDeleteModal record={deletingRecord} onConfirm={handleDelete} onCancel={() => !deleteLoading && setDeletingRecord(null)} loading={deleteLoading} />
       )}
 
       {editingRecord && (
-        <EditModal
-          record={editingRecord}
-          onSave={handleEdit}
-          onCancel={() => setEditingRecord(null)}
-        />
+        <EditModal record={editingRecord} onSave={handleEdit} onCancel={() => setEditingRecord(null)} />
       )}
 
-      {/* Top navigation */}
       <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-sm border-b border-border">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-14 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -408,18 +443,12 @@ export default function Dashboard() {
             </div>
             <span className="font-semibold text-sm tracking-tight text-foreground">DataVault</span>
           </div>
-
           <div className="flex items-center gap-3">
             <div className="hidden sm:flex items-center gap-1.5 text-xs text-muted-foreground bg-muted px-2.5 py-1.5 rounded-lg">
               <Database className="w-3 h-3" />
-              <span>
-                {records.length} record{records.length !== 1 ? "s" : ""}
-              </span>
+              <span>{records.length} record{records.length !== 1 ? "s" : ""}</span>
             </div>
-            <button
-              onClick={handleLogout}
-              className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-muted"
-            >
+            <button onClick={handleLogout} className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors px-3 py-1.5 rounded-lg hover:bg-muted">
               <LogOut className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">Logout</span>
             </button>
@@ -434,7 +463,6 @@ export default function Dashboard() {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Section A: Create Entry */}
           <div className="lg:col-span-1">
             <div className="bg-card border border-card-border rounded-2xl p-6 shadow-sm sticky top-22">
               <div className="flex items-center gap-2.5 mb-5">
@@ -449,56 +477,27 @@ export default function Dashboard() {
 
               <form onSubmit={handleCreate} className="space-y-4">
                 <div className="space-y-1.5">
-                  <label htmlFor="title" className="block text-xs font-medium text-foreground">
-                    Title <span className="text-destructive">*</span>
-                  </label>
-                  <input
-                    id="title"
-                    type="text"
-                    value={title}
-                    onChange={(e) => setTitle(e.target.value)}
-                    placeholder="Enter a title…"
-                    required
-                    className="w-full h-10 px-3 rounded-xl border border-input bg-background text-foreground placeholder:text-muted-foreground text-sm outline-none transition-all focus:ring-2 focus:ring-ring focus:border-transparent"
-                  />
+                  <label htmlFor="title" className="block text-xs font-medium text-foreground">Title <span className="text-destructive">*</span></label>
+                  <input id="title" type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Enter a title…" required className="w-full h-10 px-3 rounded-xl border border-input bg-background text-sm outline-none transition-all focus:ring-2 focus:ring-ring" />
                 </div>
 
                 <div className="space-y-1.5">
-                  <label htmlFor="description" className="block text-xs font-medium text-foreground">
-                    Description
-                  </label>
-                  <textarea
-                    id="description"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    placeholder="Describe this record…"
-                    rows={4}
-                    className="w-full px-3 py-2.5 rounded-xl border border-input bg-background text-foreground placeholder:text-muted-foreground text-sm outline-none transition-all focus:ring-2 focus:ring-ring focus:border-transparent resize-none"
-                  />
+                  <label htmlFor="description" className="block text-xs font-medium text-foreground">Description</label>
+                  <textarea id="description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Describe this record…" rows={4} className="w-full px-3 py-2.5 rounded-xl border border-input bg-background text-sm outline-none transition-all focus:ring-2 focus:ring-ring resize-none" />
                 </div>
 
-                <button
-                  type="submit"
-                  disabled={submitting || !title.trim()}
-                  className="w-full h-10 bg-primary text-primary-foreground rounded-xl font-medium text-sm transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
-                >
-                  {submitting ? (
-                    <>
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                      Saving…
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="w-3.5 h-3.5" />
-                      Add Record
-                    </>
-                  )}
+                <div className="space-y-1.5 pt-2">
+                  <label htmlFor="videoFile" className="block text-xs font-medium text-foreground">Video File (Optional)</label>
+                  <input id="videoFile" type="file" accept="video/*" onChange={(e) => setSelectedFile(e.target.files?.[0] || null)} disabled={submitting} className="w-full text-sm text-muted-foreground file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 transition-all cursor-pointer disabled:opacity-50" />
+                </div>
+
+                <button type="submit" disabled={submitting || !title.trim()} className="w-full h-10 bg-primary text-primary-foreground rounded-xl font-medium text-sm transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2">
+                  {submitting ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />{uploadProgressMsg || "Saving..."}</> : <><Plus className="w-3.5 h-3.5" />Add Record</>}
                 </button>
               </form>
             </div>
           </div>
 
-          {/* Section B: Data Vault */}
           <div className="lg:col-span-2">
             <div className="flex items-center gap-2.5 mb-4">
               <div className="w-8 h-8 bg-primary/10 rounded-xl flex items-center justify-center">
@@ -510,96 +509,91 @@ export default function Dashboard() {
               </div>
             </div>
 
-            {/* Loading skeleton */}
-            {loadingRecords && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <SkeletonCard key={i} />
-                ))}
-              </div>
-            )}
+            {loadingRecords && <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">{Array.from({ length: 4 }).map((_, i) => <SkeletonCard key={i} />)}</div>}
 
-            {/* Error state */}
             {!loadingRecords && fetchError && (
               <div className="flex flex-col items-center justify-center py-16 text-center gap-4">
-                <div className="w-12 h-12 bg-destructive/10 rounded-2xl flex items-center justify-center">
-                  <AlertCircle className="w-5 h-5 text-destructive" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-foreground">Failed to load records</p>
-                  <p className="text-xs text-muted-foreground mt-1">{fetchError}</p>
-                </div>
-                <button
-                  onClick={fetchRecords}
-                  className="text-xs text-primary hover:underline font-medium"
-                >
-                  Try again
-                </button>
+                <div className="w-12 h-12 bg-destructive/10 rounded-2xl flex items-center justify-center"><AlertCircle className="w-5 h-5 text-destructive" /></div>
+                <div><p className="text-sm font-medium text-foreground">Failed to load records</p><p className="text-xs text-muted-foreground mt-1">{fetchError}</p></div>
+                <button onClick={fetchRecords} className="text-xs text-primary hover:underline font-medium">Try again</button>
               </div>
             )}
 
-            {/* Empty state */}
             {!loadingRecords && !fetchError && records.length === 0 && (
               <div className="flex flex-col items-center justify-center py-16 text-center gap-4">
-                <div className="w-12 h-12 bg-muted rounded-2xl flex items-center justify-center">
-                  <Database className="w-5 h-5 text-muted-foreground" />
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-foreground">No records yet</p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Create your first record using the form on the left.
-                  </p>
-                </div>
+                <div className="w-12 h-12 bg-muted rounded-2xl flex items-center justify-center"><Database className="w-5 h-5 text-muted-foreground" /></div>
+                <div><p className="text-sm font-medium text-foreground">No records yet</p><p className="text-xs text-muted-foreground mt-1">Create your first record using the form on the left.</p></div>
               </div>
             )}
 
-            {/* Records grid */}
             {!loadingRecords && !fetchError && records.length > 0 && (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {records.map((record) => (
-                  <div
-                    key={record.id}
-                    className="group bg-card border border-card-border rounded-2xl p-5 space-y-3 shadow-sm hover:shadow-md transition-all hover:border-border"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <h3 className="font-semibold text-sm text-foreground leading-snug line-clamp-2 flex-1">
-                        {record.title}
-                      </h3>
-                      <div className="flex items-center gap-1 flex-shrink-0">
-                        <button
-                          onClick={() => setEditingRecord(record)}
-                          title="Edit record"
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/8 transition-colors opacity-0 group-hover:opacity-100"
-                        >
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => setDeletingRecord(record)}
-                          title="Delete record"
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/8 transition-colors opacity-0 group-hover:opacity-100"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="text-xs bg-primary/8 text-primary px-2 py-0.5 rounded-lg font-medium border border-primary/15">
-                          #{typeof record.id === "number" ? record.id : String(record.id).slice(0, 8)}
-                        </span>
+              <div className="grid grid-cols-1 gap-4">
+                {records.map((record) => {
+                  const videoMatch = record.description?.match(/\[Attached Video: (.*?)\]/);
+                  const videoKey = videoMatch ? videoMatch[1] : null;
+                  const taskState = publishTasks[record.id];
+
+                  return (
+                    <div key={record.id} className="group bg-card border border-card-border rounded-2xl p-5 shadow-sm hover:shadow-md transition-all hover:border-border flex flex-col justify-between">
+                      <div>
+                        <div className="flex items-start justify-between gap-3 mb-3">
+                          <h3 className="font-semibold text-sm text-foreground leading-snug line-clamp-2 flex-1">{record.title}</h3>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => setEditingRecord(record)} title="Edit" className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-primary hover:bg-primary/8 transition-colors opacity-0 group-hover:opacity-100"><Pencil className="w-3.5 h-3.5" /></button>
+                            <button onClick={() => setDeletingRecord(record)} title="Delete" className="w-7 h-7 rounded-lg flex items-center justify-center text-muted-foreground hover:text-destructive hover:bg-destructive/8 transition-colors opacity-0 group-hover:opacity-100"><Trash2 className="w-3.5 h-3.5" /></button>
+                            <span className="text-xs bg-primary/8 text-primary px-2 py-0.5 rounded-lg font-medium border border-primary/15">#{typeof record.id === "number" ? record.id : String(record.id).slice(0, 8)}</span>
+                          </div>
+                        </div>
+
+                        {record.description && <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap mb-4">{record.description}</p>}
+                      </div>
+
+                      <div className="mt-auto pt-4 border-t border-border">
+                        <div className="flex items-center justify-between mb-3">
+                          <div className="flex items-center gap-1.5">
+                            <FileText className="w-3 h-3 text-muted-foreground/60 shrink-0" />
+                            <span className="text-xs text-muted-foreground">{formatDate(record.created_at)}</span>
+                          </div>
+                        </div>
+
+                        {videoKey && (
+                          <div className="bg-muted/50 rounded-xl p-3 border border-border/50">
+                            {!taskState ? (
+                              <button 
+                                onClick={() => handlePublishToYouTube(record.id, videoKey, record.title)}
+                                className="w-full flex items-center justify-center gap-2 bg-[#FF0000]/10 text-[#FF0000] hover:bg-[#FF0000]/20 h-9 rounded-lg text-xs font-semibold transition-all"
+                              >
+                                <Youtube className="w-4 h-4" />
+                                Automate YouTube Publishing
+                              </button>
+                            ) : (
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between text-xs font-semibold text-foreground">
+                                  <span className="flex items-center gap-2">
+                                    {taskState.status === "SUCCESS" ? (
+                                      <CheckCircle2 className="w-4 h-4 text-green-500" />
+                                    ) : (
+                                      <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                                    )}
+                                    {taskState.status === "SUCCESS" ? "Published!" : "Processing..."}
+                                  </span>
+                                  <span className="text-muted-foreground">{taskState.progress}%</span>
+                                </div>
+                                {(() => {
+                                  const progressValue = Math.round(taskState.progress);
+
+                                  return (
+                                    <Progress value={progressValue} className="w-full" />
+                                  );
+                                })()}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
-
-                    {record.description && (
-                      <p className="text-xs text-muted-foreground leading-relaxed line-clamp-3">
-                        {record.description}
-                      </p>
-                    )}
-
-                    <div className="flex items-center gap-1.5 pt-1 border-t border-border">
-                      <FileText className="w-3 h-3 text-muted-foreground/60 flex-shrink-0" />
-                      <span className="text-xs text-muted-foreground">
-                        {formatDate(record.created_at)}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

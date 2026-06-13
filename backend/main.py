@@ -1,29 +1,54 @@
-from fastapi import FastAPI, Depends, HTTPException, status
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from fastapi.middleware.cors import CORSMiddleware # <-- 1. IMPORT THE BOUNCER
-from sqlalchemy.orm import Session
+import os
+from fastapi.responses import RedirectResponse
+from google_auth_oauthlib.flow import Flow
+
+# CRITICAL: This explicitly tells Google to allow OAuth over standard HTTP for localhost development.
+# Without this, the flow will violently crash requiring HTTPS.
+os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"
+
+CLIENT_SECRETS_FILE = "client_secrets.json"
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
 import hashlib
 import uuid
-from typing import List
+from pydantic import BaseModel
 
-# Import our custom structural layers
+class JobTicket(BaseModel):
+    video_key: str
+    title: str
+from worker import simulate_youtube_upload, celery_app
+from typing import List
+from worker import simulate_youtube_upload
+
+# CRITICAL: Load environment variables FIRST before anything else!
+from dotenv import load_dotenv
+load_dotenv()
+
+import boto3
+from botocore.client import Config
+
+from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+
+# Importing custom structural layers
 from database import engine, SessionLocal, Base
 import models
 import schemas
 import auth
 
+# 1. INITIALIZE FASTAPI (Only Once) ---
 app = FastAPI()
-models.Base.metadata.create_all(bind=engine)
 
-# --- 2. ACTIVATE THE GUEST LIST (CORS) ---
-# --- 2. ACTIVATE THE GUEST LIST (CORS) ---
+# 2. ACTIVATE THE GUEST LIST (CORS) ---
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://data-vault--adityayadav7459.replit.app",
         "https://data-vault--adityayadav7459.replit.app/",
         "http://localhost:3000",
-        "http://localhost:5173",    # <-- ADDED YOUR LOCAL VITE PORT
+        "http://localhost:5173",    # <-- ADDED LOCAL VITE PORT
         "http://127.0.0.1:5173"     # <-- ADDED THE IP EQUIVALENT
     ],
     allow_credentials=True,
@@ -33,8 +58,6 @@ app.add_middleware(
 
 security_lock = HTTPBearer()
 
-
-# ... (Leave all your routes exactly as they are below this!)
 def get_db():
     db = SessionLocal()
     try:
@@ -86,25 +109,22 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
 
 # --- NEW PHASE 3: CORE PROTECTED RECORD DOORS ---
 
-# Door 1: Create a brand new record stamped with the logged-in user's tag
+# Door 1: Created a new record stamped with the logged-in user's tag
 @app.post("/records", response_model=schemas.RecordResponse, status_code=status.HTTP_201_CREATED)
 def create_new_record(
     record_input: schemas.RecordCreate,
     credentials: HTTPAuthorizationCredentials = Depends(security_lock),
     db: Session = Depends(get_db)
 ):
-    # 1. Inspect and verify the swiped token card
     token_data = auth.verify_access_token(credentials.credentials)
     current_user_id = token_data.get("user_id")
     
-    # 2. Translate the input data into a physical rows row, stamping it with the owner's ID
     new_record = models.Record(
         title=record_input.title,
         description=record_input.description,
-        user_id=uuid.UUID(current_user_id) # <-- FIX 1: Wrapped in UUID here!
+        user_id=uuid.UUID(current_user_id) 
     )
     
-    # 3. Commit it to the PostgreSQL vault disk
     db.add(new_record)
     db.commit()
     db.refresh(new_record)
@@ -117,13 +137,11 @@ def get_my_records(
     credentials: HTTPAuthorizationCredentials = Depends(security_lock),
     db: Session = Depends(get_db)
 ):
-    # 1. Inspect and verify the swiped token card
     token_data = auth.verify_access_token(credentials.credentials)
     current_user_id = token_data.get("user_id")
     
-    # 2. Query the vault: Fetch ONLY records where user_id matches the token card owner
     user_records = db.query(models.Record).filter(
-        models.Record.user_id == uuid.UUID(current_user_id) # <-- FIX 2: Wrapped in UUID here!
+        models.Record.user_id == uuid.UUID(current_user_id) 
     ).all()
     
     return user_records
@@ -135,29 +153,23 @@ def get_single_record(
     credentials: HTTPAuthorizationCredentials = Depends(security_lock),
     db: Session = Depends(get_db)
 ):
-    # 1. Verify the swiped token keycard
     token_data = auth.verify_access_token(credentials.credentials)
     current_user_id = token_data.get("user_id")
     
-    # 2. Search the database for this specific record ID
     record = db.query(models.Record).filter(models.Record.id == record_id).first()
     
-    # --- SCENARIO A: THE GHOST RECORD ---
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID {record_id} does not exist."
         )
         
-    # --- SCENARIO B: THE SPY / DATA LEAK ---
-    # Convert both IDs to strings to ensure an exact match check
     if str(record.user_id) != str(current_user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access Denied: You do not own this data record."
         )
         
-    # 3. Access Verified! Hand over the single record data safely
     return record
 
 # Door 4: Delete a specific record cleanly and securely
@@ -167,28 +179,23 @@ def delete_record(
     credentials: HTTPAuthorizationCredentials = Depends(security_lock),
     db: Session = Depends(get_db)
 ):
-    # 1. Decode the swiped keycard token
     token_data = auth.verify_access_token(credentials.credentials)
     current_user_id = token_data.get("user_id")
     
-    # 2. Locate the requested asset inside the vault
     record = db.query(models.Record).filter(models.Record.id == record_id).first()
     
-    # --- SCENARIO A: DELETING A GHOST ---
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID {record_id} does not exist."
         )
         
-    # --- SCENARIO B: THE MALICIOUS WIPER (IDOR ATTACK) ---
     if str(record.user_id) != str(current_user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access Denied: You do not have permission to delete this record."
         )
         
-    # 3. Validation passed! Wipe the entry row from the vault disk
     db.delete(record)
     db.commit()
     
@@ -202,33 +209,213 @@ def update_record(
     credentials: HTTPAuthorizationCredentials = Depends(security_lock),
     db: Session = Depends(get_db)
 ):
-    # 1. Decode the swiped keycard token
     token_data = auth.verify_access_token(credentials.credentials)
     current_user_id = token_data.get("user_id")
     
-    # 2. Locate the requested row entry inside the vault
     record = db.query(models.Record).filter(models.Record.id == record_id).first()
     
-    # --- SCENARIO A: MODIFYING A GHOST RECORD ---
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Record with ID {record_id} does not exist."
         )
         
-    # --- SCENARIO B: THE HIJACKER ATTACK (IDOR) ---
     if str(record.user_id) != str(current_user_id):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access Denied: You do not have permission to modify this record."
         )
         
-    # 3. Validation passed! Overwrite the existing row values with the new inputs
     record.title = record_update.title
     record.description = record_update.description
     
-    # 4. Save the modifications back into the PostgreSQL vault disk
     db.commit()
     db.refresh(record)
     
     return record
+
+# --- PHASE 2: DIRECT-TO-CLOUD UPLOAD PIPELINE ---
+
+@app.post("/generate-upload-url")
+def generate_presigned_url(
+    file_name: str, 
+    file_type: str, 
+    credentials: HTTPAuthorizationCredentials = Depends(security_lock)
+):
+    # 1. Verify the user is logged in
+    auth.verify_access_token(credentials.credentials)
+    
+    # 2. Safely fetch environment variables
+    storage_endpoint = os.getenv("STORAGE_ENDPOINT")
+    storage_access_key = os.getenv("STORAGE_ACCESS_KEY")
+    storage_secret_key = os.getenv("STORAGE_SECRET_KEY")
+    bucket_name = os.getenv("STORAGE_BUCKET_NAME")
+
+    # 3. Defensive Check: Throw a clear error if .env is missing
+    if not all([storage_endpoint, storage_access_key, storage_secret_key, bucket_name]):
+        raise HTTPException(status_code=500, detail="Server Storage Configuration is missing in .env")
+
+    # 4. Configure the boto3 client to talk to your local MinIO server
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=storage_endpoint,
+        aws_access_key_id=storage_access_key,
+        aws_secret_access_key=storage_secret_key,
+        config=Config(signature_version='s3v4'),
+        region_name='us-east-1' # Boto3 requires a region, even for local servers
+    )
+    
+    # 5. Generate a unique, safe file name 
+    unique_file_name = f"{uuid.uuid4()}-{file_name}"
+    
+    # 6. Ask MinIO for a temporary URL that allows a PUT request
+    try:
+        presigned_url = s3_client.generate_presigned_url(
+            'put_object',
+            Params={
+                'Bucket': bucket_name,
+                'Key': unique_file_name,
+                'ContentType': file_type
+            },
+            ExpiresIn=3600 # The URL expires in 1 hour
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not generate URL: {str(e)}")
+        
+    return {
+        "upload_url": presigned_url,
+        "file_key": unique_file_name
+    }
+
+# --- PHASE 3: AUTOMATION ENGINE ROUTES ---
+
+from pydantic import BaseModel
+
+class JobTicket(BaseModel):
+    video_key: str
+    title: str
+
+@app.post("/test-background-upload")
+def test_automation_engine(ticket: JobTicket, credentials: HTTPAuthorizationCredentials = Depends(security_lock)):
+    # 1. Verify user
+    auth.verify_access_token(credentials.credentials)
+    
+    # 2. Send the job ticket to Redis using the JSON Body properties
+    task = simulate_youtube_upload.delay(ticket.video_key, ticket.title)
+    
+    # 3. Respond instantly
+    return {
+        "message": "Job ticket sent to Redis!",
+        "task_id": task.id
+    }
+
+# --- PHASE 3: AUTOMATION STATUS ---
+
+@app.get("/task-status/{task_id}")
+def get_task_status(task_id: str, credentials: HTTPAuthorizationCredentials = Depends(security_lock)):
+    # 1. Verify user
+    auth.verify_access_token(credentials.credentials)
+    
+    # 2. Looking up the specific job ticket in the Redis cloud
+    task = celery_app.AsyncResult(task_id)
+    
+    # 3. Translate the Celery state into a React-friendly response
+    if task.state == 'PROGRESS':
+        return {"status": "PROGRESS", "progress": task.info.get('progress', 0)}
+    elif task.state == 'SUCCESS':
+        return {"status": "SUCCESS", "progress": 100}
+    elif task.state == 'FAILURE':
+        return {"status": "FAILURE", "progress": 0}
+        
+    # Default for PENDING or STARTED
+    return {"status": task.state, "progress": 0}
+
+
+# --- PHASE 4: GOOGLE OAUTH2 HANDSHAKE ---
+
+import secrets
+import redis
+from fastapi.responses import RedirectResponse
+from google_auth_oauthlib.flow import Flow
+
+# 1. Connect to the Redis "Clipboard"
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
+redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+
+# Fetch dynamic URLs for routing
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+
+@app.get("/auth/youtube/login")
+def youtube_login(credentials: HTTPAuthorizationCredentials = Depends(security_lock)):
+    # Verify the user requesting the login is actually logged into our app
+    auth_payload = auth.verify_access_token(credentials.credentials)
+    user_id = auth_payload.get("user_id")
+    
+    if not user_id:
+        raise HTTPException(status_code=401, detail="You must be logged in to connect YouTube.")
+
+    # Build the Google handshake engine
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRETS_FILE,
+        scopes=SCOPES,
+        redirect_uri=f"{BACKEND_URL}/auth/callback"
+    )
+    
+    # Generate the secure Google URL and the random "coat check ticket" (state)
+    authorization_url, state = flow.authorization_url(
+        access_type='offline',
+        include_granted_scopes='true',
+        prompt='consent'
+    )
+    
+    # Save the ticket to Redis. Link it to the User ID. Expire in 600 seconds (10 mins).
+    redis_client.setex(f"oauth_state:{state}", 600, str(user_id))
+    
+    return RedirectResponse(url=authorization_url)
+
+
+@app.get("/auth/callback")
+def youtube_callback(request: Request, db: Session = Depends(get_db)):
+    # 1. Catch the ticket (state) and approval code returned by Google
+    state = request.query_params.get("state")
+    code = request.query_params.get("code")
+    
+    if not state or not code:
+        raise HTTPException(status_code=400, detail="Missing critical OAuth parameters from Google.")
+        
+    # 2. Check the Redis clipboard for the ticket
+    user_id = redis_client.get(f"oauth_state:{state}")
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Login expired or invalid. Please try again.")
+        
+    # 3. Burn the ticket immediately so it can never be used again
+    redis_client.delete(f"oauth_state:{state}")
+        
+    # 4. Rebuild the handshake engine using the verified ticket
+    flow = Flow.from_client_secrets_file(
+        CLIENT_SECRETS_FILE,
+        scopes=SCOPES,
+        redirect_uri=f"{BACKEND_URL}/auth/callback",
+        state=state
+    )
+    
+    # 5. Mint the final access keys
+    flow.fetch_token(code=code)
+    credentials = flow.credentials
+    
+    refresh_token = credentials.refresh_token
+    access_token = credentials.token
+    
+    if not refresh_token:
+        # If Google doesn't send a refresh token, the user needs to revoke app access in their Google settings and retry
+        return RedirectResponse(url=f"{FRONTEND_URL}/dashboard?youtube_connected=error_no_refresh")
+
+    # --- SUCCESS ---
+    # Here is where you will eventually save the refresh_token to your ConnectedAccount database table using the user_id we pulled from Redis!
+    
+    print("\n" + "="*50)
+    print(f"SUCCESS! Verified User ID {user_id} secured a Refresh Token.")
+    print("="*50 + "\n")
+    
+    return RedirectResponse(url=f"{FRONTEND_URL}/dashboard?youtube_connected=true")

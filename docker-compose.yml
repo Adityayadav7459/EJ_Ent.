@@ -1,0 +1,81 @@
+version: '3.8'
+
+services:
+  # 1. The Relational Vault
+  db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: yourpassword
+      POSTGRES_DB: datavault
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  # 2. The Cloud Broker
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # 3. The Object Storage Vault
+  minio:
+    image: minio/minio
+    command: server /data --address ":9000" --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      # Tell MinIO to accept signatures from the universal bridge
+      MINIO_SERVER_URL: "http://host.docker.internal:9000"
+      MINIO_API_CORS_ALLOW_ORIGIN: "*"
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+
+  # 4. The API Manager
+  backend:
+    build: ./backend
+    env_file:
+      - ./backend/.env
+    # This guarantees Linux recognizes the bridge
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - redis
+      - minio
+
+  # 5. The Automation Engine
+  worker:
+    build: ./backend
+    command: celery -A worker.celery_app worker --loglevel=info
+    env_file:
+      - ./backend/.env
+    # This guarantees Linux recognizes the bridge
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./backend/client_secrets.json:/app/client_secrets.json
+    depends_on:
+      - redis
+      - minio
+
+  # 6. The User Interface
+  frontend:
+    build:
+      context: ./ej-ent-web
+      dockerfile: artifacts/web/Dockerfile
+    ports:
+      - "5173:80" 
+    depends_on:
+      - backend
+
+# --- PERSISTENT HARD DRIVES ---
+volumes:
+  postgres_data:
+  minio_data:

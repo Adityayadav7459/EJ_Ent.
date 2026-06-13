@@ -13,3 +13,9 @@ node_modules/
 dist/
 build/
 .vite-temp/
+
+.env
+client_secrets.json
+*.pem
+__pycache__/
+venv/
