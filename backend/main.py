@@ -257,14 +257,22 @@ def generate_presigned_url(
     if not all([storage_endpoint, storage_access_key, storage_secret_key, bucket_name]):
         raise HTTPException(status_code=500, detail="Server Storage Configuration is missing in .env")
 
-    # 4. Configure the boto3 client to talk to your local MinIO server
+    # THE DEV-OPS MASTERSTROKE: 
+    # Strip port 9000 BEFORE we generate the signature. 
+    # This forces the cryptographic math to align perfectly with the Nginx Port 80 Gateway.
+    public_gateway_url = storage_endpoint.replace(":9000", "") 
+
+    # 4. Configure the boto3 client
     s3_client = boto3.client(
         's3',
-        endpoint_url=storage_endpoint,
+        endpoint_url=public_gateway_url, # <-- Using the pristine Port 80 URL
         aws_access_key_id=storage_access_key,
         aws_secret_access_key=storage_secret_key,
-        config=Config(signature_version='s3v4'),
-        region_name='us-east-1' # Boto3 requires a region, even for local servers
+        config=Config(
+            signature_version='s3v4',
+            s3={'addressing_style': 'path'} # <-- CRITICAL: Forces MinIO directory routing
+        ),
+        region_name='us-east-1'
     )
     
     # 5. Generate a unique, safe file name 
