@@ -253,24 +253,25 @@ def generate_presigned_url(
     storage_secret_key = os.getenv("STORAGE_SECRET_KEY")
     bucket_name = os.getenv("STORAGE_BUCKET_NAME")
 
-    # 3. Defensive Check: Throw a clear error if .env is missing
+    # 3. Defensive Check
     if not all([storage_endpoint, storage_access_key, storage_secret_key, bucket_name]):
         raise HTTPException(status_code=500, detail="Server Storage Configuration is missing in .env")
 
-    # THE DEV-OPS MASTERSTROKE: 
-    # Strip port 9000 BEFORE we generate the signature. 
-    # This forces the cryptographic math to align perfectly with the Nginx Port 80 Gateway.
-    public_gateway_url = storage_endpoint.replace(":9000", "") 
+    # THE SPLIT-BRAIN ROUTER FIX:
+    # We forcefully translate the internal Docker 'minio' domain into your public 
+    # Azure IP, and strip the port. This guarantees the cryptographic math 
+    # perfectly aligns with the Nginx proxy, regardless of what the .env says.
+    public_gateway_url = storage_endpoint.replace("minio", "40.80.89.198").replace(":9000", "")
 
     # 4. Configure the boto3 client
     s3_client = boto3.client(
         's3',
-        endpoint_url=public_gateway_url, # <-- Using the pristine Port 80 URL
+        endpoint_url=public_gateway_url, # <-- Mathematically locked to the public IP
         aws_access_key_id=storage_access_key,
         aws_secret_access_key=storage_secret_key,
         config=Config(
             signature_version='s3v4',
-            s3={'addressing_style': 'path'} # <-- CRITICAL: Forces MinIO directory routing
+            s3={'addressing_style': 'path'}
         ),
         region_name='us-east-1'
     )
