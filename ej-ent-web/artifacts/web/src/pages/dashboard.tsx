@@ -371,17 +371,13 @@ export default function Dashboard() {
         );
 
         if (!res.ok) throw new Error("FastAPI refused the upload ticket.");
-        // 1. We receive the ticket from FastAPI
         const data = await res.json();
         const { upload_url, file_key } = data;
 
-        // 2. DEV-OPS BYPASS: Strip the blocked Port 9000 from the URL so it routes through our Nginx Proxy on Port 80
-        const proxiedUploadUrl = upload_url.replace(':9000', '');
-
         setUploadProgressMsg("Pushing massive file to MinIO via Nginx Proxy...");
         
-        // 3. Use the new proxied URL for the upload
-        const minioRes = await fetch(proxiedUploadUrl, {
+        // DEV-OPS HACK REMOVED: We use the pristine, untouched URL exactly as FastAPI signed it
+        const minioRes = await fetch(upload_url, {
           method: 'PUT', 
           body: selectedFile, 
           headers: { 'Content-Type': selectedFile.type },
