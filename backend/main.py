@@ -308,11 +308,12 @@ class JobTicket(BaseModel):
 
 @app.post("/test-background-upload")
 def test_automation_engine(ticket: JobTicket, credentials: HTTPAuthorizationCredentials = Depends(security_lock)):
-    # 1. Verify user
-    auth.verify_access_token(credentials.credentials)
+    # 1. Verify user AND extract their unique ID
+    token_data = auth.verify_access_token(credentials.credentials)
+    current_user_id = token_data.get("user_id")
     
-    # 2. Send the job ticket to Redis using the JSON Body properties
-    task = simulate_youtube_upload.delay(ticket.video_key, ticket.title)
+    # 2. THE CRITICAL FIX: Pass current_user_id to the Celery worker!
+    task = simulate_youtube_upload.delay(ticket.video_key, ticket.title, current_user_id)
     
     # 3. Respond instantly
     return {
@@ -423,10 +424,24 @@ def youtube_callback(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url=f"{FRONTEND_URL}/dashboard?youtube_connected=error_no_refresh")
 
     # --- SUCCESS ---
-    # Here is where you will eventually save the refresh_token to your ConnectedAccount database table using the user_id we pulled from Redis!
-    
-    print("\n" + "="*50)
-    print(f"SUCCESS! Verified User ID {user_id} secured a Refresh Token.")
-    print("="*50 + "\n")
-    
+    # We use your dedicated ConnectedAccount table instead of crowding the User table!
+    existing_account = db.query(models.ConnectedAccount).filter(
+        models.ConnectedAccount.user_id == user_id,
+        models.ConnectedAccount.platform == "youtube"
+    ).first()
+
+    if existing_account:
+        existing_account.refresh_token = refresh_token
+        existing_account.access_token = access_token
+    else:
+        new_account = models.ConnectedAccount(
+            platform="youtube",
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_id=user_id
+        )
+        db.add(new_account)
+
+    db.commit()
+
     return RedirectResponse(url=f"{FRONTEND_URL}/dashboard?youtube_connected=true")
