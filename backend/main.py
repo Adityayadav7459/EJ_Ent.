@@ -1,4 +1,5 @@
 import os
+import uuid
 from fastapi.responses import RedirectResponse
 from google_auth_oauthlib.flow import Flow
 
@@ -424,9 +425,11 @@ def youtube_callback(request: Request, db: Session = Depends(get_db)):
         return RedirectResponse(url=f"{FRONTEND_URL}/dashboard?youtube_connected=error_no_refresh")
 
     # --- SUCCESS ---
-    # We use your dedicated ConnectedAccount table instead of crowding the User table!
+    # THE FIX: Cast the string user_id we got from Redis back to a UUID
+    user_uuid = uuid.UUID(user_id)
+    
     existing_account = db.query(models.ConnectedAccount).filter(
-        models.ConnectedAccount.user_id == user_id,
+        models.ConnectedAccount.user_id == user_uuid, # <-- Cast applied here!
         models.ConnectedAccount.platform == "youtube"
     ).first()
 
@@ -438,7 +441,7 @@ def youtube_callback(request: Request, db: Session = Depends(get_db)):
             platform="youtube",
             access_token=access_token,
             refresh_token=refresh_token,
-            user_id=user_id
+            user_id=user_uuid                 # <-- Cast applied here!
         )
         db.add(new_account)
 
