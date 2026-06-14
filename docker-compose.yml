@@ -24,15 +24,11 @@ services:
     image: minio/minio
     command: server /data --console-address ":9001"
     environment:
-      # Change from "minioadmin" to dynamic variables:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-      MINIO_BROWSER_REDIRECT_URL: http://40.80.89.198:9000
-      MINIO_SERVER_URL: http://40.80.89.198:9000
+      MINIO_BROWSER_REDIRECT_URL: http://40.80.89.198
+      MINIO_SERVER_URL: http://40.80.89.198
       MINIO_API_CORS_ALLOW_ORIGIN: "http://40.80.89.198"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
 
   # 4. The API Manager
   backend:
