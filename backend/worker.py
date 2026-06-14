@@ -2,6 +2,7 @@ import os
 import ssl
 import json
 import boto3
+import uuid
 from celery import Celery
 from dotenv import load_dotenv
 from database import SessionLocal
@@ -41,18 +42,15 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id:
     # 1. Open a database connection inside the worker
     db = SessionLocal()
     
-    # 2. Fetch the specific user's connected YouTube account
+    # 2. THE FIX: Cast the string user_id to a native UUID object
     account = db.query(models.ConnectedAccount).filter(
-        models.ConnectedAccount.user_id == user_id,
+        models.ConnectedAccount.user_id == uuid.UUID(user_id), # <-- Cast applied here!
         models.ConnectedAccount.platform == "youtube"
     ).first()
     
     # 3. Extract THEIR specific token
     user_token = account.refresh_token if account else None
     db.close()
-    
-    if not user_token:
-        return {"status": "FAILURE", "error": "User has not connected their YouTube account."}
         
     # 4. We inject the dynamic token into the Google Credentials!
     # (In your upcoming Google API logic, you will use `user_token` instead of the .env variable)
