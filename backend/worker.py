@@ -8,10 +8,11 @@ from dotenv import load_dotenv
 from database import SessionLocal
 import models
 
-#GOOGLE API ENGINES ---
+# GOOGLE API ENGINES ---
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+from googleapiclient.errors import HttpError
 
 # 1. Load Environment Variables
 load_dotenv()
@@ -28,7 +29,7 @@ celery_app.conf.update(
 MINIO_BUCKET = os.getenv("MINIO_BUCKET_NAME", "ej-ent-videos")
 s3_client = boto3.client(
     's3',
-    endpoint_url="http://minio:9000",  # <--- THE MAGIC BRIDGE
+    endpoint_url="http://minio:9000",
     aws_access_key_id=os.getenv("STORAGE_ACCESS_KEY", "minioadmin"),
     aws_secret_access_key=os.getenv("STORAGE_SECRET_KEY", "minioadmin"),
     region_name="us-east-1"
@@ -42,20 +43,23 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id:
     # 1. Open a database connection inside the worker
     db = SessionLocal()
     
-    # 2. THE FIX: Cast the string user_id to a native UUID object
+    # 2. Cast the string user_id to a native UUID object
     account = db.query(models.ConnectedAccount).filter(
-        models.ConnectedAccount.user_id == uuid.UUID(user_id), # <-- Cast applied here!
+        models.ConnectedAccount.user_id == uuid.UUID(user_id),
         models.ConnectedAccount.platform == "youtube"
     ).first()
     
     # 3. Extract THEIR specific token
     user_token = account.refresh_token if account else None
     db.close()
-        
-    # 4. We inject the dynamic token into the Google Credentials!
-    # (In your upcoming Google API logic, you will use `user_token` instead of the .env variable)
     
-    local_temp_file = f"temp_{video_file_key}"
+    # CRITICAL FIX 1: Guard against missing tokens
+    if not user_token:
+        self.update_state(state='FAILURE', meta={'progress': 0})
+        return {"status": "FAILURE", "error": "User has not connected their YouTube account."}
+        
+    # CRITICAL FIX 2: Use /tmp/ directory to avoid Docker permission crashes
+    local_temp_file = f"/tmp/{video_file_key}"
     
     try:
         # --- PHASE 1: EXTRACT FROM MINIO ---
@@ -81,7 +85,6 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id:
         # --- PHASE 3: TRANSMIT TO YOUTUBE ---
         print(f"[{video_file_key}] Streaming payload to YouTube servers...")
         
-        # uploaded as PRIVATE so it don't accidentally spam a public channel while testing.
         request_body = {
             'snippet': {
                 'title': post_title,
@@ -101,7 +104,7 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id:
             media_body=media
         )
         
-        # Execute the upload (This may take several seconds depending on file size)
+        # Execute the upload (Blocks until finished)
         response = request.execute()
         video_id = response.get('id')
         
@@ -111,28 +114,30 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id:
         print(f"SUCCESS! Video is LIVE at: https://youtu.be/{video_id}")
         print("="*60 + "\n")
         
+        self.update_state(state='SUCCESS', meta={'progress': 100})
+        return f"Successfully uploaded video ID: {video_id}"
+        
+    except HttpError as e:
+        # CRITICAL FIX 3: Catch Google API rejections (like missing YouTube channels)
+        error_details = json.loads(e.content.decode('utf-8'))
+        print(f"\n[GOOGLE API REJECTION]: {error_details}")
+        
+        # Force the bar to fail rather than retry an impossible request
+        self.update_state(state='FAILURE', meta={'progress': 0})
+        raise Exception(f"Google API Error: {error_details}")
+        
     except Exception as e:
-        # 1. Calculate the exponential delay (2^retries * 10 seconds)
-        # Attempt 0 -> 10s | Attempt 1 -> 20s | Attempt 2 -> 40s
         retry_delay = (2 ** self.request.retries) * 10
-        
         print(f"\n[WARNING] Pipeline Interrupted: {e}")
-        print(f"[{video_file_key}] Initiating auto-recovery. Retrying in {retry_delay} seconds (Attempt {self.request.retries + 1}/3)...")
+        print(f"[{video_file_key}] Initiating auto-recovery. Retrying in {retry_delay} seconds...")
         
-        # 2. Tell Celery to pause and re-queue the exact same job
-        # This will securely raise the exception ONLY if we hit our max_retries limit
         raise self.retry(exc=e, countdown=retry_delay)
         
     finally:
         # --- PHASE 4: CLEANUP ---
-        # Always scrub the temporary file so we don't blow up our hard drive.
         if os.path.exists(local_temp_file):
             try:
                 os.remove(local_temp_file)
                 print(f"[{video_file_key}] Temporary workspace scrubbed.")
             except PermissionError:
-                # If Windows locks the file during a crash, ignore the error gracefully
-                print(f"[{video_file_key}] Note: Windows locked the temp file. It will be scrubbed on next system reboot.")
-
-    self.update_state(state='SUCCESS', meta={'progress': 100})
-    return f"Successfully uploaded video ID: {video_id}"
+                print(f"[{video_file_key}] Note: Windows locked the temp file. It will be scrubbed later.")
