@@ -326,22 +326,43 @@ def test_automation_engine(ticket: JobTicket, credentials: HTTPAuthorizationCred
 
 @app.get("/task-status/{task_id}")
 def get_task_status(task_id: str, credentials: HTTPAuthorizationCredentials = Depends(security_lock)):
-    # 1. Verify user
-    auth.verify_access_token(credentials.credentials)
-    
-    # 2. Looking up the specific job ticket in the Redis cloud
-    task = celery_app.AsyncResult(task_id)
-    
-    # 3. Translate the Celery state into a React-friendly response
-    if task.state == 'PROGRESS':
-        return {"status": "PROGRESS", "progress": task.info.get('progress', 0)}
-    elif task.state == 'SUCCESS':
-        return {"status": "SUCCESS", "progress": 100}
-    elif task.state == 'FAILURE':
-        return {"status": "FAILURE", "progress": 0}
+    try:
+        # 1. Verify user
+        auth.verify_access_token(credentials.credentials)
         
-    # Default for PENDING or STARTED
-    return {"status": task.state, "progress": 0}
+        # 2. Look up the specific job ticket
+        task = celery_app.AsyncResult(task_id)
+        
+        # 3. Safely Extract State
+        if task.state == 'PROGRESS':
+            # THE FIX: Ensure task.info is actually a dictionary before calling .get()
+            progress = 0
+            if isinstance(task.info, dict):
+                progress = task.info.get('progress', 0)
+            return {"status": "PROGRESS", "progress": progress}
+            
+        elif task.state == 'SUCCESS':
+            return {"status": "SUCCESS", "progress": 100}
+            
+        elif task.state == 'FAILURE':
+            return {"status": "FAILURE", "progress": 0}
+            
+        # Default for PENDING, STARTED, or RETRY
+        return {"status": task.state, "progress": 0}
+        
+    except HTTPException:
+        # Let intentional FastAPI 401/403 security errors pass through normally
+        raise
+        
+    except Exception as e:
+        # THE FIX: Catch expired JWT tokens or Redis connection drops without throwing a 500 CORS crash!
+        print(f"\n[POLLING PROTECTED] Background status check intercepted an error: {e}")
+        
+        # Force a clean 401 Unauthorized so the React frontend knows to stop polling
+        raise HTTPException(
+            status_code=401, 
+            detail="Session expired or background connection lost. Please refresh and log in again."
+        )
 
 
 # --- PHASE 4: GOOGLE OAUTH2 HANDSHAKE ---
