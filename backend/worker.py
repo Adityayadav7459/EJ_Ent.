@@ -4,6 +4,8 @@ import json
 import boto3
 from celery import Celery
 from dotenv import load_dotenv
+from database import SessionLocal
+import models
 
 #GOOGLE API ENGINES ---
 from google.oauth2.credentials import Credentials
@@ -32,9 +34,28 @@ s3_client = boto3.client(
 )
 
 @celery_app.task(bind=True, max_retries=3)
-def simulate_youtube_upload(self, video_file_key: str, post_title: str):
+def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id: str):
     print(f"\n[{video_file_key}] INITIATING FULL YOUTUBE PIPELINE...")
     self.update_state(state='PROGRESS', meta={'progress': 10})
+
+    # 1. Open a database connection inside the worker
+    db = SessionLocal()
+    
+    # 2. Fetch the specific user's connected YouTube account
+    account = db.query(models.ConnectedAccount).filter(
+        models.ConnectedAccount.user_id == user_id,
+        models.ConnectedAccount.platform == "youtube"
+    ).first()
+    
+    # 3. Extract THEIR specific token
+    user_token = account.refresh_token if account else None
+    db.close()
+    
+    if not user_token:
+        return {"status": "FAILURE", "error": "User has not connected their YouTube account."}
+        
+    # 4. We inject the dynamic token into the Google Credentials!
+    # (In your upcoming Google API logic, you will use `user_token` instead of the .env variable)
     
     local_temp_file = f"temp_{video_file_key}"
     
@@ -51,7 +72,7 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str):
             
         creds = Credentials(
             token=None,
-            refresh_token=os.getenv("YOUTUBE_REFRESH_TOKEN"),
+            refresh_token=user_token,
             client_id=secrets['client_id'],
             client_secret=secrets['client_secret'],
             token_uri=secrets['token_uri']
