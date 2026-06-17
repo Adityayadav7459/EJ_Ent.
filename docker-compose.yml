@@ -69,6 +69,8 @@ services:
       - "80:80" 
     depends_on:
       - backend
+    volumes:                  
+      - minio_data:/data
 
 # --- PERSISTENT HARD DRIVES ---
 volumes:
