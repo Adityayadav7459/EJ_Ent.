@@ -29,6 +29,8 @@ services:
       MINIO_BROWSER_REDIRECT_URL: http://40.80.89.198
       MINIO_SERVER_URL: http://40.80.89.198
       MINIO_API_CORS_ALLOW_ORIGIN: "http://40.80.89.198"
+      volumes:                     
+      - minio_data:/data
 
   # 4. The API Manager
   backend:
@@ -69,8 +71,6 @@ services:
       - "80:80" 
     depends_on:
       - backend
-    volumes:                  
-      - minio_data:/data
 
 # --- PERSISTENT HARD DRIVES ---
 volumes:
