@@ -55,8 +55,9 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id:
     
     # CRITICAL FIX 1: Guard against missing tokens
     if not user_token:
-        self.update_state(state='FAILURE', meta={'progress': 0})
-        return {"status": "FAILURE", "error": "User has not connected their YouTube account."}
+        print(f"[{video_file_key}] ERROR: No connected YouTube account found.")
+        # Let Celery natively handle the failure state. Do not pass dictionaries to FAILURE!
+        raise ValueError("User has not connected their YouTube account.")
         
     # CRITICAL FIX 2: Use /tmp/ directory to avoid Docker permission crashes
     local_temp_file = f"/tmp/{video_file_key}"
@@ -122,9 +123,8 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id:
         error_details = json.loads(e.content.decode('utf-8'))
         print(f"\n[GOOGLE API REJECTION]: {error_details}")
         
-        # Force the bar to fail rather than retry an impossible request
-        self.update_state(state='FAILURE', meta={'progress': 0})
-        raise Exception(f"Google API Error: {error_details}")
+        # Let Celery natively handle the failure state.
+        raise ValueError(f"Google API Error: {error_details}")
         
     except Exception as e:
         retry_delay = (2 ** self.request.retries) * 10
