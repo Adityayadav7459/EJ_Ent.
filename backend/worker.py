@@ -40,35 +40,28 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id:
     print(f"\n[{video_file_key}] INITIATING FULL YOUTUBE PIPELINE...")
     self.update_state(state='PROGRESS', meta={'progress': 10})
 
-    # 1. Open a database connection inside the worker
     db = SessionLocal()
-    
-    # 2. Cast the string user_id to a native UUID object
     account = db.query(models.ConnectedAccount).filter(
         models.ConnectedAccount.user_id == uuid.UUID(user_id),
         models.ConnectedAccount.platform == "youtube"
     ).first()
     
-    # 3. Extract THEIR specific token
     user_token = account.refresh_token if account else None
     db.close()
     
-    # CRITICAL FIX 1: Guard against missing tokens
+    # GUARD 1: Fail instantly if the user has no token (Prevents 0% Hang)
     if not user_token:
-        print(f"[{video_file_key}] ERROR: No connected YouTube account found.")
-        # Let Celery natively handle the failure state. Do not pass dictionaries to FAILURE!
+        print(f"[{video_file_key}] ERROR: No connected YouTube account found in DB.")
         raise ValueError("User has not connected their YouTube account.")
         
-    # CRITICAL FIX 2: Use /tmp/ directory to avoid Docker permission crashes
+    # GUARD 2: Secure Docker file path
     local_temp_file = f"/tmp/{video_file_key}"
     
     try:
-        # --- PHASE 1: EXTRACT FROM MINIO ---
         print(f"[{video_file_key}] Downloading payload from MinIO vault...")
         s3_client.download_file(MINIO_BUCKET, video_file_key, local_temp_file)
         self.update_state(state='PROGRESS', meta={'progress': 30})
         
-        # --- PHASE 2: GOOGLE AUTHORIZATION ---
         print(f"[{video_file_key}] Forging secure Google credentials...")
         with open('client_secrets.json', 'r') as f:
             secrets = json.load(f)['web']
@@ -83,9 +76,7 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id:
         youtube = build('youtube', 'v3', credentials=creds)
         self.update_state(state='PROGRESS', meta={'progress': 50})
         
-        # --- PHASE 3: TRANSMIT TO YOUTUBE ---
         print(f"[{video_file_key}] Streaming payload to YouTube servers...")
-        
         request_body = {
             'snippet': {
                 'title': post_title,
@@ -98,46 +89,31 @@ def simulate_youtube_upload(self, video_file_key: str, post_title: str, user_id:
         }
         
         media = MediaFileUpload(local_temp_file, chunksize=-1, resumable=True)
+        request = youtube.videos().insert(part="snippet,status", body=request_body, media_body=media)
         
-        request = youtube.videos().insert(
-            part="snippet,status",
-            body=request_body,
-            media_body=media
-        )
-        
-        # Execute the upload (Blocks until finished)
         response = request.execute()
         video_id = response.get('id')
         
         self.update_state(state='PROGRESS', meta={'progress': 90})
-        
-        print("\n" + "="*60)
-        print(f"SUCCESS! Video is LIVE at: https://youtu.be/{video_id}")
-        print("="*60 + "\n")
-        
+        print(f"\nSUCCESS! Video is LIVE at: https://youtu.be/{video_id}\n")
         self.update_state(state='SUCCESS', meta={'progress': 100})
         return f"Successfully uploaded video ID: {video_id}"
         
     except HttpError as e:
-        # CRITICAL FIX 3: Catch Google API rejections (like missing YouTube channels)
+        # GUARD 3: Catch Google Rejections (e.g., No YouTube Channel exists for this email)
         error_details = json.loads(e.content.decode('utf-8'))
         print(f"\n[GOOGLE API REJECTION]: {error_details}")
-        
-        # Let Celery natively handle the failure state.
         raise ValueError(f"Google API Error: {error_details}")
         
     except Exception as e:
         retry_delay = (2 ** self.request.retries) * 10
         print(f"\n[WARNING] Pipeline Interrupted: {e}")
-        print(f"[{video_file_key}] Initiating auto-recovery. Retrying in {retry_delay} seconds...")
-        
+        print(f"[{video_file_key}] Retrying in {retry_delay} seconds...")
         raise self.retry(exc=e, countdown=retry_delay)
         
     finally:
-        # --- PHASE 4: CLEANUP ---
         if os.path.exists(local_temp_file):
             try:
                 os.remove(local_temp_file)
-                print(f"[{video_file_key}] Temporary workspace scrubbed.")
             except PermissionError:
-                print(f"[{video_file_key}] Note: Windows locked the temp file. It will be scrubbed later.")
+                pass
